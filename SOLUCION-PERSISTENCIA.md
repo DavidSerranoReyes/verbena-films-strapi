@@ -29,23 +29,34 @@ Documentación de Render que respalda B:
 
 Caducidad de la base Free: https://render.com/changelog/free-postgresql-instances-now-expire-after-30-days-previously-90
 
-### 1.2 Lo que falta por confirmar (30 segundos)
+### 1.2 Comprobado en producción (29 de septiembre de 2026)
 
-Hay **indicios** de que producción ya usa Postgres:
-- commit del 6 de enero: *"Add PostgreSQL driver (pg) dependency"*;
-- commit del 4 de septiembre: *"Fix Postgres connection to prefer DATABASE_URL cleanly"* (y el comentario del código menciona Neon).
+Sondeé el servicio real con peticiones de sólo lectura:
 
-Si es así, la base de datos **no** se borra en los reinicios; lo que sí se borra son
-**los pósteres** (punto C) y lo que falla es el **rol/permisos** de la cuenta (punto G).
+| Prueba | Resultado | Conclusión |
+| --- | --- | --- |
+| 20 minutos sin tráfico y luego una petición | tardó **34,8 s** en responder (arranque en frío) | el servicio **sí se duerme** (plan Free, sin monitor que lo mantenga despierto) |
+| `/admin/init` justo después de ese reinicio | `hasAdmin: true` | **la base de datos es persistente** (Postgres): las cuentas **no** se borran en los reinicios |
+| `/admin/init` después del redeploy del 29/09 | `hasAdmin: true` | también sobrevive a los despliegues |
+| `/api/films` antes / después de desplegar este código | **403 → 200** | el código nuevo está en producción y la lectura pública ya funciona |
+| `/api/films` y `/api/articles` (público) | `{"data":[]}` | la base está **vacía**: 0 películas y 0 noticias publicadas |
 
-**Cómo saberlo con certeza**, en Render → servicio `verbena-films-strapi`:
+**Conclusión:** el borrado de cuentas y contenido ocurrió **antes** (probablemente al pasar
+de SQLite a Postgres en enero: todo lo creado en la etapa SQLite se perdió), no por las
+siestas de Render. Lo que **sí** se sigue perdiendo en cada reinicio son **las imágenes**
+(punto C de la tabla): el póster que suba la clienta desaparecerá hasta que se configure
+Cloudinary.
 
-1. Pestaña **Environment**: ¿existe `DATABASE_URL`? ¿y `DATABASE_CLIENT=postgres`?
-2. Tras el próximo despliegue, en **Logs** este repo imprime ahora:
-   `[arranque] Base de datos: postgres · Imágenes: cloudinary` (o `sqlite` / `local`).
+> ⚠️ Por eso: **si ya tienes `DATABASE_URL` configurada, NO la cambies ni crees otra base
+> de datos**. Lo que falta por configurar es **Cloudinary** (imágenes) y **`ADMIN_EMAIL`**
+> (cuenta y rol: es lo que hace que el panel deje de verse vacío).
 
-> ⚠️ **Si ya existe `DATABASE_URL`, NO la cambies ni crees otra base**: cópiala tal cual.
-> Cambiar la URL a una base nueva = empezar con el contenido vacío.
+Y el "panel vacío" que ella ve tiene dos causas que se suman:
+1. **no hay contenido** en la base (0 entradas publicadas), y
+2. si su usuario no tiene rol **Super Admin**, el *Content Manager* no le muestra las
+   colecciones aunque existan.
+
+Ambas se resuelven en el Paso 3 y el Paso 6.
 
 ---
 
@@ -61,56 +72,55 @@ Si es así, la base de datos **no** se borra en los reinicios; lo que sí se bor
 | `.env.example` | Todas las variables nuevas documentadas. |
 | `render.yaml` | Referencia de configuración (no afecta al servicio actual, Render sólo lo lee si creas un Blueprint nuevo). |
 
-### Verificado en local antes de subirlo
+### Verificado antes de subirlo
+
+**En local:**
 
 - `npm run build` → **OK** (TypeScript compila sin errores).
 - Arranque real de Strapi con una cuenta de prueba: crea el usuario **Super Admin** y lo
   reporta en los logs → `[arranque] Cuenta Super Admin creada para verify@example.com`.
-- Antes, `GET /api/films` daba **403**; después del bootstrap da **200** con
-  `{"data":[...]}` sin necesidad de token.
+- `GET /api/films` pasó de **403** a **200** sin token tras el bootstrap.
+
+**En producción (después del deploy del 29/09, commit `1260721`):**
+
+- `GET /api/films` → **200** (antes 403): el código nuevo está corriendo en Render.
+- `hasAdmin: true` se mantuvo tras un reinicio y tras el redeploy: la base de datos es
+  persistente.
 
 ---
 
 ## 3. Paso a paso (una sola vez)
 
-### Paso 1 · Confirmar si ya tienes base de datos persistente
+### Paso 1 · Base de datos: **no tocar nada**
 
-Render → `verbena-films-strapi` → **Environment**:
+Ya está comprobado que producción usa una base de datos persistente (Postgres): las
+cuentas sobreviven a reinicios y despliegues.
 
-- **Ya hay `DATABASE_URL`** → perfecto, guárdala y **no la toques**. Salta al Paso 3.
-- **No hay nada de base de datos** → Paso 2.
+- **No cambies `DATABASE_URL`.** Si la cambias por otra base, empiezas con todo vacío.
+- Sólo necesitas confirmar en **Logs** que aparece
+  `[arranque] Base de datos: postgres · Imágenes: ...`.
 
-### Paso 2 · Crear la base de datos en Neon (gratis, no caduca)
+> Sólo si en los logs apareciera `Base de datos: sqlite` habría que crear una base en
+> Neon (gratis, no caduca) y poner `DATABASE_CLIENT=postgres` + `DATABASE_URL` +
+> `DATABASE_SSL=true` + `DATABASE_SSL_REJECT_UNAUTHORIZED=false`:
+> 1. **https://neon.com** → cuenta gratis (sin tarjeta).
+> 2. **Create project** → región igual a la de Render (p. ej. Europe/Frankfurt).
+> 3. **Connect** → copia la connection string *Direct connection* (**sin** `-pooler`).
 
-1. Entra en **https://neon.com** y crea una cuenta (GitHub o email, **sin tarjeta**).
-2. **Create project**:
-   - Name: `verbena-films`
-   - Region: la misma zona que tu servicio de Render (p. ej. **Europe (Frankfurt)**).
-3. Pulsa **Connect** y copia la **connection string** *Direct connection* (**sin** `-pooler`):
-
-   ```
-   postgresql://neondb_owner:CLAVE@ep-algo-123456.eu-central-1.aws.neon.tech/neondb?sslmode=require
-   ```
-
-> Neon se suspende a los 5 minutos sin tráfico y despierta solo (~1 s). No pierde datos.
-
-### Paso 3 · Cloudinary para los pósteres (gratis)
+### Paso 2 · Cloudinary para los pósteres (gratis) — **esto es lo que falta**
 
 1. Entra en **https://cloudinary.com/users/register_free** (sin tarjeta).
 2. En el **Dashboard**, sección *Product Environment Credentials*, copia
    **Cloud name**, **API Key** y **API Secret**.
 
-### Paso 4 · Variables en Render
+Sin esto, cada imagen que suba la clienta se borrará en el siguiente reinicio del servicio.
+
+### Paso 3 · Variables en Render
 
 Render → **Environment** → **Add Environment Variable**:
 
 | Variable | Valor |
 | --- | --- |
-| `DATABASE_CLIENT` | `postgres` |
-| `DATABASE_URL` | la de Neon (o **la que ya tenías**, sin cambiarla) |
-| `DATABASE_SSL` | `true` |
-| `DATABASE_SSL_REJECT_UNAUTHORIZED` | `false` |
-| `DATABASE_POOL_MIN` | `0` |
 | `UPLOAD_PROVIDER` | `cloudinary` |
 | `CLOUDINARY_NAME` | tu *Cloud name* |
 | `CLOUDINARY_KEY` | tu *API Key* |
@@ -120,9 +130,10 @@ Render → **Environment** → **Add Environment Variable**:
 | `ADMIN_FIRSTNAME` | p. ej. `Ana` |
 | `ADMIN_LASTNAME` | p. ej. `Puentes` |
 
-Estas ya existen y **no deben cambiar nunca** (si cambian, se cierran las sesiones y se
-invalidan los tokens): `APP_KEYS`, `API_TOKEN_SALT`, `ADMIN_JWT_SECRET`,
-`TRANSFER_TOKEN_SALT`, `JWT_SECRET`, `ENCRYPTION_KEY`.
+**No toques** `DATABASE_URL` ni `DATABASE_CLIENT`. Tampoco deben cambiar nunca (si
+cambian, se cierran las sesiones y se invalidan los tokens): `APP_KEYS`,
+`API_TOKEN_SALT`, `ADMIN_JWT_SECRET`, `TRANSFER_TOKEN_SALT`, `JWT_SECRET`,
+`ENCRYPTION_KEY`.
 
 > 💡 Si en `ADMIN_EMAIL` pones **el email que ya usa la dueña**, esa cuenta se convierte
 > automáticamente en **Super Admin** al arrancar (sin cambiarle la contraseña): así deja
@@ -130,7 +141,7 @@ invalidan los tokens): `APP_KEYS`, `API_TOKEN_SALT`, `ADMIN_JWT_SECRET`,
 
 Guardar → Render redespliega solo. Si no: **Manual Deploy → Deploy latest commit**.
 
-### Paso 5 · Comprobar en los logs
+### Paso 4 · Comprobar en los logs
 
 ```
 [arranque] Base de datos: postgres · Imágenes: cloudinary
@@ -138,9 +149,10 @@ Guardar → Render redespliega solo. Si no: **Manual Deploy → Deploy latest co
 [arranque] Lectura pública activada para: api::film.film.find, ...
 ```
 
-Si ves `sqlite` o `local`, falta alguna variable del Paso 4.
+Si ves `Imágenes: local`, falta `UPLOAD_PROVIDER=cloudinary`. Si ves
+`Base de datos: sqlite`, avísame antes de tocar nada.
 
-### Paso 6 · Verificar la API pública
+### Paso 5 · Verificar la API pública
 
 ```bash
 curl -s https://verbena-films-strapi.onrender.com/api/films | head -c 400
@@ -148,18 +160,19 @@ curl -s https://verbena-films-strapi.onrender.com/api/films | head -c 400
 
 Debe devolver `{"data":[...]}` (antes: `403 Forbidden`).
 
-### Paso 7 · Subir el póster de TARANTA (lo hace la dueña)
+### Paso 6 · Crear/revisar el póster de TARANTA (lo hace la dueña)
 
 1. `https://verbena-films-strapi.onrender.com/admin` → entrar con su email.
-2. **Content Manager → Film → Taranta** (o *Create new entry*).
-3. **Poster** → *Add an asset* → subir la imagen (se guarda en Cloudinary).
-4. **Save**.
-5. ⚠️ **Publish** (botón azul arriba a la derecha). Sin este paso la web no lo recibe.
+2. **Content Manager → Film → Create new entry**.
+3. Rellenar título, director, año, país y sinopsis (son obligatorios).
+4. **Poster** → *Add an asset* → subir la imagen (se guarda en Cloudinary).
+5. **Save**.
+6. ⚠️ **Publish** (botón azul arriba a la derecha). Sin este paso la web no lo recibe.
 
-### Paso 8 · Probar que ya no se borra nada
+### Paso 7 · Probar que ya no se borra nada
 
-Render → **Manual Deploy → Deploy latest commit**. Al terminar, entrar al panel: el
-contenido y los usuarios deben seguir ahí (antes desaparecía todo).
+Subir una imagen, luego Render → **Manual Deploy → Deploy latest commit**. Al terminar,
+la imagen y el contenido deben seguir ahí (antes desaparecían).
 
 ---
 
@@ -176,9 +189,23 @@ contenido, pero la web no lo lee en vivo.
 | **B. Rebuild automático** | medio | *Deploy Hook* + webhook de Strapi: al publicar, la web se reconstruye sola. |
 | **C. Web en Vercel con SSR** | alto | Los cambios se ven al instante, sin reconstruir. |
 
-Para A y B, en el `.env` del frontend: `PUBLIC_USE_STRAPI=true`,
-`PUBLIC_STRAPI_URL=https://verbena-films-strapi.onrender.com` (el `STRAPI_API_TOKEN` ya
-no es imprescindible: ahora hay lectura pública de lo publicado).
+Para A y B, en el `.env` del frontend: `PUBLIC_USE_STRAPI=true` y
+`PUBLIC_STRAPI_URL=https://verbena-films-strapi.onrender.com`.
+
+**Sobre `STRAPI_API_TOKEN` (comprobado a mano):**
+
+| Petición a `/api/films` | Respuesta |
+| --- | --- |
+| Sin cabecera `Authorization` | **200** (rol público, ya activado) |
+| Con `Authorization: Bearer ` (vacío) | **200** |
+| Con un token **inválido o caducado** | **401** ← ojo |
+
+Es decir: si la web envía un token viejo, **no** cae al rol público, falla. Como el
+token del `.env` actual (enero) ya no existe en la base de datos, lo más robusto es
+**dejarlo vacío** (`STRAPI_API_TOKEN=`) y apoyarse en la lectura pública, o generar un
+token nuevo en *Settings → API Tokens* y usarlo. Lo más importante: **la web guarda el
+contenido en el momento del build**, así que hasta que no se reconstruya y se suba el
+`dist/` a CDmon, no se verá nada nuevo.
 
 ### 4.2 Que el panel no tarde 1 minuto en abrir
 
@@ -203,7 +230,7 @@ Avísame y lo hacemos; si ya era Postgres, no se pierde nada.
 | `self signed certificate in certificate chain` | SSL estricto contra Neon | `DATABASE_SSL=true` y `DATABASE_SSL_REJECT_UNAUTHORIZED=false` |
 | `password authentication failed for user` | URL mal copiada | Volver a copiar la connection string (codificar caracteres especiales: `@`→`%40`) |
 | `Could not load upload provider "cloudinary"` | Falta el paquete | Redesplegar (el build hace `npm install`) |
-| `UPLOAD_PROVIDER=cloudinary pero faltan credenciales` | Faltan `CLOUDINARY_*` | Revisar el Paso 4 |
+| `UPLOAD_PROVIDER=cloudinary pero faltan credenciales` | Faltan `CLOUDINARY_*` | Revisar el Paso 3 |
 | La dueña entra y ve el panel vacío | Su rol no es Super Admin | Poner su email en `ADMIN_EMAIL` y redesplegar |
 | Sube una película y no aparece en la web | Está en borrador | Pulsar **Publish** |
 | `Invalid registrationToken` | Token de un solo uso o caducado | Ya no hace falta: la cuenta se crea con `ADMIN_EMAIL` |

@@ -100,7 +100,9 @@ async function ensureAdminUser(strapi: Core.Strapi) {
       return;
     }
 
-    const existing = await userService.findOneByEmail(email);
+    // Ojo: hay que pedir el populate de roles, si no `existing.roles` viene
+    // vacío y el bootstrap volvería a escribir el rol en cada arranque.
+    const existing = await userService.findOneByEmail(email, ['roles']);
 
     if (existing) {
       const roleIds = (existing.roles ?? []).map((role: { id: number }) => role.id);

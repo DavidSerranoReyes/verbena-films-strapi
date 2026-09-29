@@ -4,12 +4,17 @@
  * ── SUBIDA DE IMÁGENES (pósteres) ──────────────────────────────────────────
  * En Render el disco es EFÍMERO: si las imágenes se guardan en local
  * (public/uploads) desaparecen en cada reinicio, redeploy o siesta del plan
- * Free. Por eso en producción se suben a Cloudinary:
+ * Free. Por eso en producción se suben a Cloudinary. Dos formas de configurarlo:
  *
- *   UPLOAD_PROVIDER=cloudinary
- *   CLOUDINARY_NAME=xxxxx          (Cloud name)
- *   CLOUDINARY_KEY=xxxxxxxxxxxx    (API Key)
- *   CLOUDINARY_SECRET=xxxxxxxxxx   (API Secret)
+ *   A) Una sola variable (la que Cloudinary te da para copiar):
+ *      UPLOAD_PROVIDER=cloudinary
+ *      CLOUDINARY_URL=cloudinary://API_KEY:API_SECRET@CLOUD_NAME
+ *
+ *   B) Tres variables sueltas:
+ *      UPLOAD_PROVIDER=cloudinary
+ *      CLOUDINARY_NAME=xxxxx          (Cloud name)
+ *      CLOUDINARY_KEY=xxxxxxxxxxxx    (API Key)
+ *      CLOUDINARY_SECRET=xxxxxxxxxx   (API Secret)
  *
  * En local, sin esas variables, se usa el proveedor local de siempre
  * (las imágenes van a public/uploads) y nada cambia.
@@ -18,14 +23,32 @@ export default ({ env }) => {
   const provider = env('UPLOAD_PROVIDER', 'local');
 
   if (provider === 'cloudinary') {
-    const cloudName = env('CLOUDINARY_NAME', env('CLOUDINARY_CLOUD_NAME'));
-    const apiKey = env('CLOUDINARY_KEY', env('CLOUDINARY_API_KEY'));
-    const apiSecret = env('CLOUDINARY_SECRET', env('CLOUDINARY_API_SECRET'));
+    let cloudName = env('CLOUDINARY_NAME', env('CLOUDINARY_CLOUD_NAME'));
+    let apiKey = env('CLOUDINARY_KEY', env('CLOUDINARY_API_KEY'));
+    let apiSecret = env('CLOUDINARY_SECRET', env('CLOUDINARY_API_SECRET'));
+
+    // Si no hay variables sueltas, aceptamos la URL única de Cloudinary:
+    // cloudinary://<api_key>:<api_secret>@<cloud_name>
+    const cloudinaryUrl = env('CLOUDINARY_URL');
+    if ((!cloudName || !apiKey || !apiSecret) && cloudinaryUrl) {
+      try {
+        const parsed = new URL(String(cloudinaryUrl));
+        cloudName = cloudName || decodeURIComponent(parsed.hostname);
+        apiKey = apiKey || decodeURIComponent(parsed.username);
+        apiSecret = apiSecret || decodeURIComponent(parsed.password);
+      } catch {
+        throw new Error(
+          'CLOUDINARY_URL no tiene el formato esperado. Debe ser: ' +
+            'cloudinary://API_KEY:API_SECRET@CLOUD_NAME',
+        );
+      }
+    }
 
     if (!cloudName || !apiKey || !apiSecret) {
       throw new Error(
         'UPLOAD_PROVIDER=cloudinary pero faltan credenciales. ' +
-          'Define CLOUDINARY_NAME, CLOUDINARY_KEY y CLOUDINARY_SECRET en Render ' +
+          'Define CLOUDINARY_URL (una sola variable) o bien CLOUDINARY_NAME, ' +
+          'CLOUDINARY_KEY y CLOUDINARY_SECRET en Render ' +
           '(o borra UPLOAD_PROVIDER para usar el almacenamiento local).',
       );
     }

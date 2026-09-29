@@ -121,14 +121,22 @@ Sin esto, cada imagen que suba la clienta se borrará en el siguiente reinicio d
 
 ### Paso 3 · Variables en Render
 
-Render → **Environment** → **Add Environment Variable**:
+Render → **Environment** → **Add Environment Variable**.
+
+**Cloudinary (imágenes) — la forma rápida, con UNA sola variable:**
 
 | Variable | Valor |
 | --- | --- |
 | `UPLOAD_PROVIDER` | `cloudinary` |
-| `CLOUDINARY_NAME` | tu *Cloud name* |
-| `CLOUDINARY_KEY` | tu *API Key* |
-| `CLOUDINARY_SECRET` | tu *API Secret* |
+| `CLOUDINARY_URL` | `cloudinary://API_KEY:API_SECRET@CLOUD_NAME` (Cloudinary lo muestra tal cual en su dashboard) |
+
+*(Si prefieres, en lugar de `CLOUDINARY_URL` puedes usar las tres sueltas:
+`CLOUDINARY_NAME`, `CLOUDINARY_KEY` y `CLOUDINARY_SECRET`.)*
+
+**Cuenta de administración:**
+
+| Variable | Valor |
+| --- | --- |
 | `ADMIN_EMAIL` | el email con el que entra la dueña |
 | `ADMIN_PASSWORD` | mínimo 8 caracteres, una mayúscula y un número |
 | `ADMIN_FIRSTNAME` | p. ej. `Ana` |
@@ -245,7 +253,8 @@ Avísame y lo hacemos; si ya era Postgres, no se pierde nada.
 | `self signed certificate in certificate chain` | SSL estricto contra Neon | `DATABASE_SSL=true` y `DATABASE_SSL_REJECT_UNAUTHORIZED=false` |
 | `password authentication failed for user` | URL mal copiada | Volver a copiar la connection string (codificar caracteres especiales: `@`→`%40`) |
 | `Could not load upload provider "cloudinary"` | Falta el paquete | Redesplegar (el build hace `npm install`) |
-| `UPLOAD_PROVIDER=cloudinary pero faltan credenciales` | Falta alguna de las tres variables (o tiene un espacio de más) | Revisar el Paso 3. Strapi **no arranca a propósito** hasta que estén las tres: así no se pierden pósteres en silencio |
+| `UPLOAD_PROVIDER=cloudinary pero faltan credenciales` | No hay `CLOUDINARY_URL` ni las tres variables sueltas (o alguna tiene un espacio de más) | Revisar el Paso 3. Strapi **no arranca a propósito** hasta que esté la credencial: así no se pierden pósteres en silencio |
+| `CLOUDINARY_URL no tiene el formato esperado` | La URL está mal copiada | Debe ser exactamente `cloudinary://API_KEY:API_SECRET@CLOUD_NAME` |
 | La dueña entra y ve el panel vacío | Su rol no es Super Admin | Poner su email en `ADMIN_EMAIL` y redesplegar |
 | Sube una película y no aparece en la web | Está en borrador | Pulsar **Publish** |
 | `Invalid registrationToken` | Token de un solo uso o caducado | Ya no hace falta: la cuenta se crea con `ADMIN_EMAIL` |
@@ -276,3 +285,36 @@ El bootstrap **no** cambia contraseñas de cuentas existentes. Para cambiarla:
 >    es normal, espera un poco.
 >
 > Cualquier cosa que veas rara, me avisas y lo miro. 💛
+
+---
+
+## Anexo · Si Render te vuelve a bloquear el dashboard
+
+Síntoma: al entrar en `dashboard.render.com` aparece *"El acceso está restringido
+temporalmente… Varias posibilidades… un robot se encuentra en la misma red (IP …)"*.
+
+Causa comprobada el 29/09/2026, eran **dos cosas a la vez**:
+
+1. **Cloudflare WARP (1.1.1.1) conectado.** La IP de salida era `104.28.251.216`, del
+   rango de Cloudflare (AS13335): una salida compartida con mala reputación, así que
+   Cloudflare lanzaba el reto antirrobots.
+2. **Extensión AdBlock en Chrome** (perfil *Default*): bloquea/reescribe el script del
+   reto (`challenges.cloudflare.com`), por lo que el reto nunca se completaba y salía el
+   bloqueo definitivo.
+
+Solución y comprobación:
+
+```bash
+warp-cli status          # Connected / Disconnected
+warp-cli disconnect      # desconectar WARP (reversible con: warp-cli connect)
+curl -4 https://api.ipify.org   # ver la IP de salida real
+```
+
+Con WARP desconectado y un Chrome sin extensiones ni cookies, el dashboard carga el
+login (`Render Dashboard`). Si aun así bloqueara: excluir `dashboard.render.com` en
+AdBlock (*Detalles → Acceso al sitio → En sitios específicos*), probar en incógnito o en
+otra red (datos móviles), y no reintentar en bucle (cada intento puede alargar el bloqueo).
+
+Nota: `api.render.com` **no** pasa por ese reto (responde 401 sin API key), así que la
+API de Render sirve como vía alternativa con una API key
+(*Account Settings → API Keys*).

@@ -80,6 +80,10 @@ Ambas se resuelven en el Paso 3 y el Paso 6.
 - Arranque real de Strapi con una cuenta de prueba: crea el usuario **Super Admin** y lo
   reporta en los logs → `[arranque] Cuenta Super Admin creada para verify@example.com`.
 - `GET /api/films` pasó de **403** a **200** sin token tras el bootstrap.
+- Arranque real con `UPLOAD_PROVIDER=cloudinary` y credenciales de prueba: Strapi arranca
+  sin errores, el log dice `Imágenes: cloudinary` y la CSP del panel añade
+  `res.cloudinary.com`. La configuración está bien cableada: con las credenciales reales
+  funcionará sin sorpresas.
 
 **En producción (después del deploy del 29/09, commit `1260721`):**
 
@@ -151,6 +155,17 @@ Guardar → Render redespliega solo. Si no: **Manual Deploy → Deploy latest co
 
 Si ves `Imágenes: local`, falta `UPLOAD_PROVIDER=cloudinary`. Si ves
 `Base de datos: sqlite`, avísame antes de tocar nada.
+
+**Sin ver los logs** (por si el dashboard te vuelve a bloquear), se comprueba desde fuera:
+
+```bash
+# ¿Cloudinary ya está activo? Debe aparecer res.cloudinary.com en img-src
+curl -s -D - -o /dev/null https://verbena-films-strapi.onrender.com/admin \
+  | tr ';' '\n' | grep img-src
+
+# ¿La lectura pública funciona? Debe devolver 200
+curl -s -o /dev/null -w "%{http_code}\n" https://verbena-films-strapi.onrender.com/api/films
+```
 
 ### Paso 5 · Verificar la API pública
 
@@ -230,7 +245,7 @@ Avísame y lo hacemos; si ya era Postgres, no se pierde nada.
 | `self signed certificate in certificate chain` | SSL estricto contra Neon | `DATABASE_SSL=true` y `DATABASE_SSL_REJECT_UNAUTHORIZED=false` |
 | `password authentication failed for user` | URL mal copiada | Volver a copiar la connection string (codificar caracteres especiales: `@`→`%40`) |
 | `Could not load upload provider "cloudinary"` | Falta el paquete | Redesplegar (el build hace `npm install`) |
-| `UPLOAD_PROVIDER=cloudinary pero faltan credenciales` | Faltan `CLOUDINARY_*` | Revisar el Paso 3 |
+| `UPLOAD_PROVIDER=cloudinary pero faltan credenciales` | Falta alguna de las tres variables (o tiene un espacio de más) | Revisar el Paso 3. Strapi **no arranca a propósito** hasta que estén las tres: así no se pierden pósteres en silencio |
 | La dueña entra y ve el panel vacío | Su rol no es Super Admin | Poner su email en `ADMIN_EMAIL` y redesplegar |
 | Sube una película y no aparece en la web | Está en borrador | Pulsar **Publish** |
 | `Invalid registrationToken` | Token de un solo uso o caducado | Ya no hace falta: la cuenta se crea con `ADMIN_EMAIL` |

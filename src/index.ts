@@ -1,20 +1,203 @@
-// import type { Core } from '@strapi/strapi';
+import type { Core } from '@strapi/strapi';
+
+/**
+ * Acciones de lectura pública para la web (rol "Public" de users-permissions).
+ * Así la web puede leer películas y noticias aunque el token de API se pierda
+ * o se rote; sólo se exponen entradas PUBLICADAS.
+ */
+const PUBLIC_READ_ACTIONS = [
+  'api::film.film.find',
+  'api::film.film.findOne',
+  'api::article.article.find',
+  'api::article.article.findOne',
+];
+
+/**
+ * Deja en los logs de Render un resumen del almacenamiento en uso.
+ * Si aparece SQLite en producción, es la señal de alarma: los datos se
+ * borrarán en el siguiente reinicio o siesta del plan Free.
+ */
+function logStorageMode(strapi: Core.Strapi) {
+  let dbClient = 'desconocido';
+  let uploadProvider = 'desconocido';
+
+  try {
+    dbClient = String(strapi.config.get('database.connection.client') ?? 'desconocido');
+  } catch {
+    /* la config siempre existe, pero nunca bloqueamos el arranque por un log */
+  }
+
+  try {
+    const uploadConfig = strapi.config.get('plugin::upload') as
+      | { provider?: string }
+      | undefined;
+    uploadProvider = String(uploadConfig?.provider ?? 'local');
+  } catch {
+    /* ignorado */
+  }
+
+  strapi.log.info(`[arranque] Base de datos: ${dbClient} · Imágenes: ${uploadProvider}`);
+
+  if (dbClient === 'sqlite' && process.env.NODE_ENV === 'production') {
+    strapi.log.warn(
+      '[arranque] ATENCIÓN: Strapi está usando SQLite en producción. En Render el disco ' +
+        'es efímero y se borra en cada reinicio, redeploy o siesta: se perderán usuarios, ' +
+        'contenido e imágenes. Configura DATABASE_CLIENT=postgres y DATABASE_URL (Neon).',
+    );
+  }
+
+  if (uploadProvider === 'local' && process.env.NODE_ENV === 'production') {
+    strapi.log.warn(
+      '[arranque] ATENCIÓN: las imágenes se guardan en el disco local (public/uploads). ' +
+        'En Render se perderán en el próximo reinicio. Configura UPLOAD_PROVIDER=cloudinary ' +
+        'con CLOUDINARY_NAME, CLOUDINARY_KEY y CLOUDINARY_SECRET.',
+    );
+  }
+}
+
+/**
+ * Garantiza que existe la cuenta de administración indicada por variables de
+ * entorno y que tiene rol Super Admin.
+ *
+ * Variables:
+ *   ADMIN_EMAIL      (obligatoria para activar esta función)
+ *   ADMIN_PASSWORD   (mínimo 8 caracteres)
+ *   ADMIN_FIRSTNAME  (opcional, por defecto "Verbena")
+ *   ADMIN_LASTNAME   (opcional, por defecto "Films")
+ *
+ * Es idempotente: si la cuenta ya existe, sólo corrige rol/estado; nunca
+ * cambia la contraseña ni borra contenido.
+ */
+async function ensureAdminUser(strapi: Core.Strapi) {
+  const email = String(process.env.ADMIN_EMAIL ?? '').trim();
+  const password = String(process.env.ADMIN_PASSWORD ?? '');
+  const firstname = String(process.env.ADMIN_FIRSTNAME ?? 'Verbena').trim();
+  const lastname = String(process.env.ADMIN_LASTNAME ?? 'Films').trim();
+
+  if (!email || !password) {
+    strapi.log.info(
+      '[arranque] ADMIN_EMAIL / ADMIN_PASSWORD no definidos: no se crea ninguna cuenta automáticamente.',
+    );
+    return;
+  }
+
+  if (password.length < 8) {
+    strapi.log.warn(
+      `[arranque] ADMIN_PASSWORD debe tener al menos 8 caracteres. Se omite la cuenta ${email}.`,
+    );
+    return;
+  }
+
+  try {
+    const roleService = strapi.service('admin::role');
+    const userService = strapi.service('admin::user');
+
+    const superAdminRole = await roleService.getSuperAdmin();
+    if (!superAdminRole) {
+      strapi.log.warn(
+        '[arranque] No existe el rol Super Admin todavía; se omite la creación de la cuenta.',
+      );
+      return;
+    }
+
+    const existing = await userService.findOneByEmail(email);
+
+    if (existing) {
+      const roleIds = (existing.roles ?? []).map((role: { id: number }) => role.id);
+      const needsFix = !roleIds.includes(superAdminRole.id) || !existing.isActive;
+
+      if (needsFix) {
+        await userService.updateById(existing.id, {
+          roles: [superAdminRole.id],
+          isActive: true,
+        });
+        strapi.log.info(
+          `[arranque] Cuenta ${email}: rol Super Admin y estado activo asegurados.`,
+        );
+      } else {
+        strapi.log.info(`[arranque] Cuenta ${email} ya existe como Super Admin.`);
+      }
+      return;
+    }
+
+    await userService.create({
+      email,
+      firstname,
+      lastname,
+      password,
+      isActive: true,
+      roles: [superAdminRole.id],
+      registrationToken: null,
+    });
+
+    strapi.log.info(`[arranque] Cuenta Super Admin creada para ${email}.`);
+  } catch (error) {
+    strapi.log.error(
+      `[arranque] No se pudo preparar la cuenta ${email}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+/**
+ * Da permiso de lectura pública (sólo entradas publicadas) a Film y Article.
+ * Se puede desactivar con ENSURE_PUBLIC_READ=false.
+ */
+async function ensurePublicReadPermissions(strapi: Core.Strapi) {
+  if (String(process.env.ENSURE_PUBLIC_READ ?? 'true').toLowerCase() === 'false') {
+    return;
+  }
+
+  try {
+    const publicRole = await strapi.db
+      .query('plugin::users-permissions.role')
+      .findOne({ where: { type: 'public' } });
+
+    if (!publicRole) {
+      strapi.log.warn('[arranque] No se encontró el rol público; se omiten los permisos de lectura.');
+      return;
+    }
+
+    const permissionQuery = strapi.db.query('plugin::users-permissions.permission');
+    const added: string[] = [];
+
+    for (const action of PUBLIC_READ_ACTIONS) {
+      const existing = await permissionQuery.findOne({
+        where: { action, role: publicRole.id },
+      });
+
+      if (!existing) {
+        await permissionQuery.create({ data: { action, role: publicRole.id } });
+        added.push(action);
+      }
+    }
+
+    if (added.length > 0) {
+      strapi.log.info(`[arranque] Lectura pública activada para: ${added.join(', ')}`);
+    }
+  } catch (error) {
+    strapi.log.error(
+      `[arranque] No se pudieron asegurar los permisos públicos: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
 
 export default {
   /**
-   * An asynchronous register function that runs before
-   * your application is initialized.
-   *
-   * This gives you an opportunity to extend code.
+   * Se ejecuta antes de inicializar la aplicación.
    */
-  register(/* { strapi }: { strapi: Core.Strapi } */) {},
+  register() {},
 
   /**
-   * An asynchronous bootstrap function that runs before
-   * your application gets started.
-   *
-   * This gives you an opportunity to set up your data model,
-   * run jobs, or perform some special logic.
+   * Se ejecuta al arrancar: prepara la cuenta de administración y los permisos.
+   * Todo es idempotente y nunca interrumpe el arranque.
    */
-  bootstrap(/* { strapi }: { strapi: Core.Strapi } */) {},
+  async bootstrap({ strapi }: { strapi: Core.Strapi }) {
+    logStorageMode(strapi);
+    await ensureAdminUser(strapi);
+    await ensurePublicReadPermissions(strapi);
+  },
 };

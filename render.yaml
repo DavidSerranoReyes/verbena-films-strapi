@@ -1,0 +1,70 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# REFERENCIA, NO SE APLICA SOLO.
+#
+# Render únicamente lee este archivo si creas un "Blueprint" nuevo. El servicio
+# actual (verbena-films-strapi) ya existe y NO se ve afectado por este archivo.
+# Sirve como documentación de la configuración correcta y para recrear el
+# servicio desde cero si algún día hiciera falta.
+#
+# Los valores marcados con `sync: false` se rellenan a mano en el dashboard
+# (Render → servicio → Environment). NUNCA subas secretos reales a Git.
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  - type: web
+    name: verbena-films-strapi
+    runtime: node
+    plan: free
+    branch: master
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /_health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # ── Base de datos persistente (Neon) ──────────────────────────────────
+      - key: DATABASE_CLIENT
+        value: postgres
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: "true"
+      - key: DATABASE_SSL_REJECT_UNAUTHORIZED
+        value: "false"
+      - key: DATABASE_POOL_MIN
+        value: "0"
+
+      # ── Imágenes persistentes (Cloudinary) ────────────────────────────────
+      - key: UPLOAD_PROVIDER
+        value: cloudinary
+      - key: CLOUDINARY_NAME
+        sync: false
+      - key: CLOUDINARY_KEY
+        sync: false
+      - key: CLOUDINARY_SECRET
+        sync: false
+
+      # ── Cuenta de administración automática ───────────────────────────────
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_FIRSTNAME
+        value: Verbena
+      - key: ADMIN_LASTNAME
+        value: Films
+
+      # ── Secretos de Strapi (deben permanecer estables) ────────────────────
+      - key: APP_KEYS
+        sync: false
+      - key: API_TOKEN_SALT
+        sync: false
+      - key: ADMIN_JWT_SECRET
+        sync: false
+      - key: TRANSFER_TOKEN_SALT
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false

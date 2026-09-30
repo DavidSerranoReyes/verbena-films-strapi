@@ -20,7 +20,16 @@
  * (las imágenes van a public/uploads) y nada cambia.
  */
 export default ({ env }) => {
-  const provider = env('UPLOAD_PROVIDER', 'local');
+  // Si hay credenciales de Cloudinary pero no se indicó el proveedor, se asume
+  // Cloudinary: es lo que se quiere en producción y evita que las imágenes
+  // acaben (y se pierdan) en el disco efímero por olvidar UPLOAD_PROVIDER.
+  const hasCloudinaryCreds = Boolean(
+    env('CLOUDINARY_URL') ||
+      env('CLOUDINARY_NAME', env('CLOUDINARY_CLOUD_NAME')) ||
+      env('CLOUDINARY_KEY', env('CLOUDINARY_API_KEY')),
+  );
+
+  const provider = env('UPLOAD_PROVIDER', hasCloudinaryCreds ? 'cloudinary' : 'local');
 
   if (provider === 'cloudinary') {
     let cloudName = env('CLOUDINARY_NAME', env('CLOUDINARY_CLOUD_NAME'));

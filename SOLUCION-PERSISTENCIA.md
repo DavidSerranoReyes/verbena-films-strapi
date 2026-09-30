@@ -130,6 +130,9 @@ Render → **Environment** → **Add Environment Variable**.
 | `UPLOAD_PROVIDER` | `cloudinary` |
 | `CLOUDINARY_URL` | `cloudinary://API_KEY:API_SECRET@CLOUD_NAME` (Cloudinary lo muestra tal cual en su dashboard) |
 
+*(`UPLOAD_PROVIDER` es opcional: si hay credenciales de Cloudinary, se deduce solo. Ponlo
+sólo si quieres forzar `local`.)*
+
 *(Si prefieres, en lugar de `CLOUDINARY_URL` puedes usar las tres sueltas:
 `CLOUDINARY_NAME`, `CLOUDINARY_KEY` y `CLOUDINARY_SECRET`.)*
 

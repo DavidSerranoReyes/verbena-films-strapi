@@ -38,10 +38,19 @@ export default ({ env }) => {
 
     // Si no hay variables sueltas, aceptamos la URL única de Cloudinary:
     // cloudinary://<api_key>:<api_secret>@<cloud_name>
-    const cloudinaryUrl = env('CLOUDINARY_URL');
+    // Se tolera que se pegue la línea completa del dashboard
+    // ("CLOUDINARY_URL=cloudinary://...") o entre comillas.
+    const rawCloudinaryUrl = env('CLOUDINARY_URL');
+    const cloudinaryUrl = rawCloudinaryUrl
+      ? String(rawCloudinaryUrl)
+          .trim()
+          .replace(/^cloudinary_url\s*=\s*/i, '')
+          .replace(/^["']|["']$/g, '')
+      : undefined;
+
     if ((!cloudName || !apiKey || !apiSecret) && cloudinaryUrl) {
       try {
-        const parsed = new URL(String(cloudinaryUrl));
+        const parsed = new URL(cloudinaryUrl);
         cloudName = cloudName || decodeURIComponent(parsed.hostname);
         apiKey = apiKey || decodeURIComponent(parsed.username);
         apiSecret = apiSecret || decodeURIComponent(parsed.password);
@@ -51,6 +60,13 @@ export default ({ env }) => {
             'cloudinary://API_KEY:API_SECRET@CLOUD_NAME',
         );
       }
+    }
+
+    // El SDK de Cloudinary lee `process.env.CLOUDINARY_URL` por su cuenta al
+    // cargarse y aborta si no empieza por "cloudinary://". Le dejamos el valor
+    // ya limpio para tolerar que se pegue la línea entera del dashboard.
+    if (cloudinaryUrl) {
+      process.env.CLOUDINARY_URL = cloudinaryUrl;
     }
 
     if (!cloudName || !apiKey || !apiSecret) {

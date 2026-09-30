@@ -10,10 +10,16 @@ export default ({ env }) => {
   // El nombre del cloud se usa para autorizar sus dominios en la CSP.
   // Puede venir suelto (CLOUDINARY_NAME) o dentro de CLOUDINARY_URL.
   let cloudName = env('CLOUDINARY_NAME', env('CLOUDINARY_CLOUD_NAME'));
-  const cloudinaryUrl = env('CLOUDINARY_URL');
+  const rawCloudinaryUrl = env('CLOUDINARY_URL');
+  const cloudinaryUrl = rawCloudinaryUrl
+    ? String(rawCloudinaryUrl)
+        .trim()
+        .replace(/^cloudinary_url\s*=\s*/i, '')
+        .replace(/^["']|["']$/g, '')
+    : undefined;
   if (!cloudName && cloudinaryUrl) {
     try {
-      cloudName = new URL(String(cloudinaryUrl)).hostname;
+      cloudName = new URL(cloudinaryUrl).hostname;
     } catch {
       // Si la URL es inválida, config/plugins.ts dará el error correspondiente.
     }

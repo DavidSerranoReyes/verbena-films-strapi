@@ -36,8 +36,11 @@ services:
         value: "0"
 
       # ── Imágenes persistentes (Cloudinary) ────────────────────────────────
-      - key: UPLOAD_PROVIDER
-        value: cloudinary
+      # Opción recomendada: una sola variable con la URL que da Cloudinary.
+      # UPLOAD_PROVIDER es opcional (con credenciales se deduce Cloudinary).
+      - key: CLOUDINARY_URL
+        sync: false
+      # Opción alternativa con tres variables sueltas:
       - key: CLOUDINARY_NAME
         sync: false
       - key: CLOUDINARY_KEY

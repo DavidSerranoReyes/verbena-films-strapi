@@ -170,6 +170,12 @@ Si ves `Imágenes: local`, falta `UPLOAD_PROVIDER=cloudinary`. Si ves
 **Sin ver los logs** (por si el dashboard te vuelve a bloquear), se comprueba desde fuera:
 
 ```bash
+# Opción cómoda: script incluido en el repo (no necesita ninguna clave)
+bash scripts/verificar-produccion.sh
+```
+
+```bash
+# O a mano:
 # ¿Cloudinary ya está activo? Debe aparecer res.cloudinary.com en img-src
 curl -s -D - -o /dev/null https://verbena-films-strapi.onrender.com/admin \
   | tr ';' '\n' | grep img-src

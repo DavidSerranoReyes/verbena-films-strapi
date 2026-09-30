@@ -187,6 +187,100 @@ async function ensurePublicReadPermissions(strapi: Core.Strapi) {
   }
 }
 
+/**
+ * Avisa a GitHub para que reconstruya y publique la web.
+ *
+ * ¿Por qué? La web es estática y GitHub reconstruye cada 20 minutos, pero su
+ * planificador es poco fiable (puede tardar horas en ejecutar). Con esto, al
+ * publicar en el panel se lanza la publicación en segundos.
+ *
+ * Necesita la variable GITHUB_DISPATCH_TOKEN en Render: un token de GitHub
+ * (fine-grained, solo el repo verbena-films, permiso Contents: Read and write).
+ * Si no está definida, no pasa nada: se avisa por log y la web se actualizará
+ * en el siguiente turno del robot.
+ */
+const EVENTO_DESPLEGUE = 'strapi-publish';
+
+async function avisarAGitHub(strapi: Core.Strapi, motivo: string) {
+  const token = process.env.GITHUB_DISPATCH_TOKEN;
+  const repo = process.env.GITHUB_REPO ?? 'DavidSerranoReyes/verbena-films';
+
+  if (!token) {
+    strapi.log.info(
+      '[deploy] GITHUB_DISPATCH_TOKEN no definido: la web se actualizará en el siguiente turno del robot (hasta 20 min).',
+    );
+    return;
+  }
+
+  try {
+    const respuesta = await fetch(`https://api.github.com/repos/${repo}/dispatches`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'verbena-films-strapi',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      body: JSON.stringify({ event_type: EVENTO_DESPLEGUE, client_payload: { motivo } }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (respuesta.ok) {
+      strapi.log.info(`[deploy] Aviso enviado a GitHub para publicar la web (${motivo}).`);
+    } else {
+      const texto = await respuesta.text();
+      strapi.log.warn(
+        `[deploy] GitHub respondió ${respuesta.status} al avisar: ${texto.slice(0, 200)}`,
+      );
+    }
+  } catch (error) {
+    strapi.log.error(
+      `[deploy] No se pudo avisar a GitHub: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+// Un solo aviso aunque Strapi emita varios eventos seguidos (crear + publicar)
+let avisoPendiente: ReturnType<typeof setTimeout> | null = null;
+
+function programarAviso(strapi: Core.Strapi, motivo: string) {
+  if (avisoPendiente) clearTimeout(avisoPendiente);
+  avisoPendiente = setTimeout(() => {
+    avisoPendiente = null;
+    void avisarAGitHub(strapi, motivo);
+  }, 3000);
+}
+
+/**
+ * Escucha los cambios de Film y Article y avisa a GitHub.
+ * Se avisa de cualquier cambio (publicar, guardar borrador o borrar): el robot
+ * compara la huella del contenido publicado y decide si hay algo que subir, así
+ * que los borradores no provocan publicaciones innecesarias.
+ */
+function avisarAlCambiarContenido(strapi: Core.Strapi) {
+  try {
+    strapi.db.lifecycles.subscribe({
+      models: ['api::film.film', 'api::article.article'],
+      afterCreate: (event: any) => programarAviso(strapi, `${event.model.uid} creado`),
+      afterUpdate: (event: any) => programarAviso(strapi, `${event.model.uid} actualizado`),
+      afterDelete: (event: any) => programarAviso(strapi, `${event.model.uid} borrado`),
+    });
+
+    strapi.log.info(
+      '[deploy] Aviso automático a GitHub activado: al tocar Film o Article se reconstruye la web.',
+    );
+  } catch (error) {
+    strapi.log.error(
+      `[deploy] No se pudo activar el aviso a GitHub: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
 export default {
   /**
    * Se ejecuta antes de inicializar la aplicación.
@@ -201,5 +295,6 @@ export default {
     logStorageMode(strapi);
     await ensureAdminUser(strapi);
     await ensurePublicReadPermissions(strapi);
+    avisarAlCambiarContenido(strapi);
   },
 };

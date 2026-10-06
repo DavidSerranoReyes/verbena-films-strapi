@@ -108,13 +108,29 @@ async function ensureAdminUser(strapi: Core.Strapi) {
       const roleIds = (existing.roles ?? []).map((role: { id: number }) => role.id);
       const needsFix = !roleIds.includes(superAdminRole.id) || !existing.isActive;
 
+      // Restablecer la contraseña SOLO si se pide expresamente:
+      //   ADMIN_RESET_PASSWORD=true
+      // Sirve cuando la dueña no puede entrar: se pone la nueva en ADMIN_PASSWORD,
+      // se despliega una vez y DESPUÉS SE QUITA la variable (si se deja puesta,
+      // cada arranque volvería a poner esa contraseña).
+      const resetPassword =
+        String(process.env.ADMIN_RESET_PASSWORD ?? '').toLowerCase() === 'true';
+
+      const cambios: Record<string, unknown> = {};
       if (needsFix) {
-        await userService.updateById(existing.id, {
-          roles: [superAdminRole.id],
-          isActive: true,
-        });
+        cambios.roles = [superAdminRole.id];
+        cambios.isActive = true;
+      }
+      if (resetPassword) {
+        cambios.password = password;
+      }
+
+      if (Object.keys(cambios).length > 0) {
+        await userService.updateById(existing.id, cambios);
         strapi.log.info(
-          `[arranque] Cuenta ${email}: rol Super Admin y estado activo asegurados.`,
+          `[arranque] Cuenta ${email}: ${
+            resetPassword ? 'CONTRASEÑA RESTABLECIDA y ' : ''
+          }rol/estado asegurados.`,
         );
       } else {
         strapi.log.info(`[arranque] Cuenta ${email} ya existe como Super Admin.`);
